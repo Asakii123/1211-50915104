@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台灣空氣品質監測站即時資料</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 2rem;
+            font-size: 2rem;
+        }
+
+        .search-container {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            justify-content: center;
+        }
+
+        input, button {
+            padding: 0.5rem 1rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+
+        input {
+            width: 300px;
+            transition: border-color 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #2980b9;
+        }
+
+        button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        .table-container {
+            overflow-x: auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+        }
+
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        th.sortable {
+            cursor: pointer;
+            position: relative;
+            padding-right: 1.5rem;
+        }
+
+        th.sortable:hover {
+            background-color: #e9ecef;
+        }
+
+        th.sortable::after {
+            content: '⇅';
+            position: absolute;
+            right: 0.5rem;
+            color: #95a5a6;
+        }
+
+        th.sortable.asc::after {
+            content: '↑';
+            color: #3498db;
+        }
+
+        th.sortable.desc::after {
+            content: '↓';
+            color: #3498db;
+        }
+
+        tr:hover {
+            background-color: #f8f9fa;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+
+        .error {
+            color: #e74c3c;
+            text-align: center;
+            padding: 1rem;
+            background-color: #ffd7d7;
+            border-radius: 4px;
+            margin: 1rem 0;
+        }
+
+        .aqi-good { color: #009966; }
+        .aqi-moderate { color: #ffde33; }
+        .aqi-unhealthy-sensitive { color: #ff9933; }
+        .aqi-unhealthy { color: #cc0033; }
+        .aqi-very-unhealthy { color: #660099; }
+        .aqi-hazardous { color: #7e0023; }
+
+        @media (max-width: 768px) {
+            .search-container {
+                flex-direction: column;
+            }
+            
+            input {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>台灣空氣品質監測站即時資料</h1>
+        <div class="search-container">
+            <input type="text" id="searchInput" placeholder="請輸入監測站編號或名稱搜尋">
+            <button id="searchButton">搜尋</button>
+            <button id="fetchButton">更新資料</button>
+        </div>
+        <div id="errorContainer"></div>
+        <div class="table-container">
+            <table id="aqiTable">
+                <thead>
+                    <tr>
+                        <th>監測站編號</th>
+                        <th>監測站名稱</th>
+                        <th>監測日期</th>
+                        <th class="sortable" data-sort="aqi">空氣品質指標(AQI)</th>
+                        <th class="sortable" data-sort="so2subindex">二氧化硫指標</th>
+                        <th class="sortable" data-sort="cosubindex">一氧化碳指標</th>
+                        <th class="sortable" data-sort="o3subindex">臭氧指標</th>
+                        <th class="sortable" data-sort="pm10subindex">PM10指標</th>
+                        <th class="sortable" data-sort="no2subindex">二氧化氮指標</th>
+                        <th class="sortable" data-sort="o38subindex">臭氧8小時指標</th>
+                        <th class="sortable" data-sort="pm25subindex">PM2.5指標</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td colspan="11" class="loading">請點擊「更新資料」按鈕載入資料</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    <script>
+        const searchInput = document.getElementById("searchInput");
+        const searchButton = document.getElementById("searchButton");
+        const fetchButton = document.getElementById("fetchButton");
+        const errorContainer = document.getElementById("errorContainer");
+        let aqiData = [];
+        let currentSort = {
+            column: null,
+            direction: 'asc'
+        };
+
+        fetchButton.addEventListener("click", fetchAQIData);
+        searchButton.addEventListener("click", searchAQIData);
+        searchInput.addEventListener("keypress", (e) => {
+            if (e.key === "Enter") {
+                searchAQIData();
+            }
+        });
+
+        document.querySelectorAll('th.sortable').forEach(th => {
+            th.addEventListener('click', () => {
+                const column = th.dataset.sort;
+                handleSort(column);
+            });
+        });
+
+        function getAQIClass(aqi) {
+            const aqiNum = parseInt(aqi);
+            if (aqiNum <= 50) return 'aqi-good';
+            if (aqiNum <= 100) return 'aqi-moderate';
+            if (aqiNum <= 150) return 'aqi-unhealthy-sensitive';
+            if (aqiNum <= 200) return 'aqi-unhealthy';
+            if (aqiNum <= 300) return 'aqi-very-unhealthy';
+            return 'aqi-hazardous';
+        }
+
+        function handleSort(column) {
+            if (currentSort.column === column) {
+                currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSort.column = column;
+                currentSort.direction = 'asc';
+            }
+
+            document.querySelectorAll('th.sortable').forEach(th => {
+                th.classList.remove('asc', 'desc');
+                if (th.dataset.sort === column) {
+                    th.classList.add(currentSort.direction);
+                }
+            });
+
+            const currentData = document.querySelector("#aqiTable tbody").children.length === 1 
+                ? aqiData 
+                : getFilteredData();
+            displayAQIData(sortData(currentData));
+        }
+
+        function sortData(data) {
+            if (!currentSort.column) return data;
+
+            return [...data].sort((a, b) => {
+                let aVal = a[currentSort.column];
+                let bVal = b[currentSort.column];
+
+                aVal = aVal ? parseFloat(aVal) : 0;
+                bVal = bVal ? parseFloat(bVal) : 0;
+
+                if (isNaN(aVal)) aVal = 0;
+                if (isNaN(bVal)) bVal = 0;
+
+                return currentSort.direction === 'asc' 
+                    ? aVal - bVal 
+                    : bVal - aVal;
+            });
+        }
+
+        function setLoading(isLoading) {
+            fetchButton.disabled = isLoading;
+            searchButton.disabled = isLoading;
+            const tableBody = document.querySelector("#aqiTable tbody");
+            
+            if (isLoading) {
+                tableBody.innerHTML = '<tr><td colspan="11" class="loading">載入中...</td></tr>';
+            }
+        }
+
+        function showError(message) {
+            errorContainer.innerHTML = `<div class="error">${message}</div>`;
+        }
+
+        function clearError() {
+            errorContainer.innerHTML = '';
+        }
+
+        async function fetchAQIData() {
+            clearError();
+            setLoading(true);
+
+            try {
+                const response = await fetch("AQI.json");
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                aqiData = data;
+                displayAQIData(data);
+            } catch (error) {
+                console.error("獲取空氣品質資料時出錯:", error);
+                showError("獲取資料失敗，請稍後再試");
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        function displayAQIData(data) {
+            const tableBody = document.querySelector("#aqiTable tbody");
+            
+            if (!data || data.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="11" class="loading">無資料</td></tr>';
+                return;
+            }
+
+            const sortedData = currentSort.column ? sortData(data) : data;
+
+            tableBody.innerHTML = sortedData.map(site => `
+                <tr>
+                    <td>${site.siteid}</td>
+                    <td>${site.sitename}</td>
+                    <td>${site.monitordate}</td>
+                    <td class="${getAQIClass(site.aqi)}">${site.aqi || '-'}</td>
+                    <td>${site.so2subindex || '-'}</td>
+                    <td>${site.cosubindex || '-'}</td>
+                    <td>${site.o3subindex || '-'}</td>
+                    <td>${site.pm10subindex || '-'}</td>
+                    <td>${site.no2subindex || '-'}</td>
+                    <td>${site.o38subindex || '-'}</td>
+                    <td>${site.pm25subindex || '-'}</td>
+                </tr>
+            `).join('');
+        }
+
+        function getFilteredData() {
+            const query = searchInput.value.trim().toLowerCase();
+            return aqiData.filter(site => 
+                site.siteid.toLowerCase().includes(query) || 
+                site.sitename.toLowerCase().includes(query)
+            );
+        }
+
+        function searchAQIData() {
+            const query = searchInput.value.trim().toLowerCase();
+            
+            if (!query) {
+                showError("請輸入搜尋內容！");
+                return;
+            }
+
+            clearError();
+
+            if (!aqiData.length) {
+                showError("請先載入空氣品質資料！");
+                return;
+            }
+
+            const filteredData = getFilteredData();
+
+            if (filteredData.length === 0) {
+                showError("找不到符合的監測站資料！");
+            }
+
+            displayAQIData(filteredData);
+        }
+    </script>
+</body>
+</html>
